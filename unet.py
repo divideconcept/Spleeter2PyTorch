@@ -71,20 +71,23 @@ class ConvTranspose2dKeras(nn.ConvTranspose2d):
 
 #from https://github.com/tuan3w/spleeter-pytorch/
 #modified to support keras block (see above) and elu activation
-def down_block(in_filters, out_filters, elu=False):
-    return Conv2dKeras(in_filters, out_filters, kernel_size=5,
-                     stride=2, padding='same',
-                     ), nn.Sequential(
-        nn.BatchNorm2d(out_filters, track_running_stats=True, eps=1e-3, momentum=0.01),
-        nn.ELU(alpha=1) if elu else nn.LeakyReLU(0.2)
-    )
+def down_block(in_filters, out_filters, elu=False, keras=True):
+    return Conv2dKeras(
+        in_filters, out_filters, kernel_size=5, stride=2, padding='same'
+        ) if keras else nn.Conv2d(
+        in_filters, out_filters, kernel_size=5, stride=2, padding=2), nn.Sequential(
+            nn.BatchNorm2d(out_filters, track_running_stats=True, eps=1e-3, momentum=0.01),
+            nn.ELU(alpha=1) if elu else nn.LeakyReLU(0.2)
+        )
 
 
-def up_block(in_filters, out_filters, dropout=False, elu=False):
+def up_block(in_filters, out_filters, dropout=False, elu=False, keras=True):
     layers = [
-        ConvTranspose2dKeras(in_filters, out_filters, kernel_size=5,
-                           stride=2, padding=2, output_padding=1
-                           ),
+        ConvTranspose2dKeras(
+        in_filters, out_filters, kernel_size=5, stride=2, padding=2, output_padding=1
+        ) if keras else nn.ConvTranspose2d(
+        in_filters, out_filters, kernel_size=5, stride=2, padding=2, output_padding=1
+        ),
         nn.ELU(alpha=1) if elu else nn.ReLU(),
         nn.BatchNorm2d(out_filters, track_running_stats=True, eps=1e-3, momentum=0.01)
     ]
@@ -95,7 +98,7 @@ def up_block(in_filters, out_filters, dropout=False, elu=False):
 
 
 class UNet(nn.Module):
-    def __init__(self, elu=False):
+    def __init__(self, elu=False, keras=True):
         super(UNet, self).__init__()
         self.down1_conv, self.down1_act = down_block(2, 16, elu)
         self.down2_conv, self.down2_act = down_block(16, 32, elu)
@@ -110,7 +113,8 @@ class UNet(nn.Module):
         self.up4 = up_block(128, 32, elu=elu)
         self.up5 = up_block(64, 16, elu=elu)
         self.up6 = up_block(32, 1, elu=elu)
-        self.up7 = nn.Sequential(Conv2dKeras(1, 2, kernel_size=4, dilation=2, padding='same')) #must also be sequential to properly assign weights
+        self.up7 = nn.Sequential(Conv2dKeras(1, 2, kernel_size=4, dilation=2, padding='same'
+                   ) if keras else nn.Conv2d(1, 2, kernel_size=4, dilation=2, padding='same')) #must also be sequential to properly assign weights
 
     def forward(self, x):
         d1_conv = self.down1_conv(x)

@@ -1,6 +1,7 @@
-input_folders={2:'2stems', 4:'4stems', 5:'5stems'}
-output_folder=''
-unmix_example='unmix.wav' #must be a wav file
+input_folders={2:'2stems', 4:'4stems', 5:'5stems'} #you can optinally only keep the entries you need
+input_shape=(1,2,512,1536) #used for tracing (B x C x T x F)
+output_folder='' #where to store the traced models and the unmixed wav files (if an example file is provided)
+unmix_example='unmix.wav' #must be a wav file, can be empty if no example is provided
 
 import torch
 from torch import nn
@@ -52,7 +53,7 @@ class SpleeterNet(nn.Module):
         ckpts = tf2pytorch(checkpoint_path, num_instruments)
 
         for i in range(self.num_instruments):
-            sub_model = UNet(elu=False if num_instruments==2 else True)
+            sub_model = UNet(elu=False if num_instruments==2 else True, keras=True)
             sub_model.eval()
             load_ckpt(sub_model, ckpts[i])
             self.__setattr__('sub_model'+str(i), sub_model)
@@ -75,7 +76,7 @@ class SpleeterNet(nn.Module):
         for i in range(self.num_instruments):
             result.append(mask[..., i])
 
-        return tuple(result)
+        return result
 
 
 #OPTIONAL
@@ -87,8 +88,8 @@ class Estimator(nn.Module):
         self.model.eval()
 
         # stft config
-        self.F = 1024
-        self.T = 512
+        self.F = input_shape[3]
+        self.T = input_shape[2]
         self.win_length = 4096
         self.hop_length = 1024
         self.win = torch.hann_window(self.win_length)
@@ -172,9 +173,14 @@ for input_folder in input_folders:
     model=SpleeterNet(num_instruments=input_folder, checkpoint_path=input_folders[input_folder])
     model.eval()
 
+    print("tracing "+str(input_folder)+" stems model...")
+    traced_model=torch.jit.trace(model, torch.rand(input_shape), strict=False)
+    print("saving "+str(input_folder)+" stems model...")
+    torch.jit.save(traced_model, str(input_folder)+'stems.pt')
+
     if unmix_example:
         print("separating...")
-        es = Estimator(model)
+        es = Estimator(traced_model) # test traced model
         wav, sr = torchaudio.load(unmix_example) # load wav audio
         wav_torch = wav / (wav.max() + 1e-8) # normalize audio
         wavs = es.separate(wav_torch)
@@ -182,11 +188,5 @@ for input_folder in input_folders:
             fname = str(input_folder)+'stems_out_{}.wav'.format(i)
             print('  writing '+fname+'...')
             torchaudio.save(output_folder+fname, wavs[i].squeeze(), sr, encoding="PCM_S", bits_per_sample=16)
-
-    print("tracing "+str(input_folder)+" stems model...")
-    input_tensor=torch.rand(1,2,512,1024)
-    traced_model=torch.jit.trace(model, input_tensor)
-    print("saving "+str(input_folder)+" stems model...")
-    torch.jit.save(traced_model,str(input_folder)+'stems.pt')
 
 print("done !")
